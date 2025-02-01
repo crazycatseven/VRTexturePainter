@@ -141,19 +141,19 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: b6d98d096ccd52445817969ad0ba63d0, type: 3}
       propertyPath: m_LocalRotation.w
-      value: 1
+      value: 0.9479201
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: b6d98d096ccd52445817969ad0ba63d0, type: 3}
       propertyPath: m_LocalRotation.x
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: b6d98d096ccd52445817969ad0ba63d0, type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0
+      value: -0.31850824
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: b6d98d096ccd52445817969ad0ba63d0, type: 3}
       propertyPath: m_LocalRotation.z
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: b6d98d096ccd52445817969ad0ba63d0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -161,7 +161,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: b6d98d096ccd52445817969ad0ba63d0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
+      value: -37.145
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: b6d98d096ccd52445817969ad0ba63d0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
@@ -337,12 +337,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fb846d016d61ae744acfff8a20176ba7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  paintCameraDistance: 1
   uvShader: {fileID: 4800000, guid: 7517f3604d8e97240a7506c530676bd6, type: 3}
   targetRenderer: {fileID: 1303425440}
   mainCamera: {fileID: 330585545}
-  uvRenderTextureQuality: 1
+  uvRenderTextureQuality: 512
   brushColor: {r: 1, g: 0, b: 0, a: 1}
   brushRadius: 10
+  worldSpaceRadius: 0.1
 --- !u!1 &410087039
 GameObject:
   m_ObjectHideFlags: 0
