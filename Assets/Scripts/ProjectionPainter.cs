@@ -22,12 +22,12 @@ public class ProjectionPainter : MonoBehaviour
     [Header("Texture / RenderTexture Settings")]
     public RenderTextureQuality uvRenderTextureQuality = RenderTextureQuality.Medium;
     private RenderTexture uvRenderTexture;
-    private Texture2D readbackTexture;
 
     [Header("Compute Shader")]
     public ComputeShader painterComputeShader;
     private RenderTexture paintRenderTexture;
     private int texWidth, texHeight;
+    private int computeKernel;
 
 
     [Header("Brush Settings")]
@@ -71,7 +71,9 @@ public class ProjectionPainter : MonoBehaviour
         SetupPaintCamera();
         SetupVisualizers();
         SetupDebugPlane();
+        SetupComputeShader();
     }
+
 
 
     private bool ValidateReferences()
@@ -134,15 +136,12 @@ public class ProjectionPainter : MonoBehaviour
         uvRenderTexture.filterMode = FilterMode.Point;
         uvRenderTexture.wrapMode = TextureWrapMode.Clamp;
         uvRenderTexture.Create();
-
-        readbackTexture = new Texture2D(
-            uvRenderTexture.width,
-            uvRenderTexture.height,
-            TextureFormat.RGBAFloat,
-            false,
-            true
-        );
     }
+
+    private void SetupComputeShader() {
+        computeKernel = painterComputeShader.FindKernel("CSMain");
+    }
+
 
     private void SetupPaintCamera()
     {
@@ -262,7 +261,6 @@ public class ProjectionPainter : MonoBehaviour
         // Compute the brush size in UV texture pixels
         float brushSizeUV = brushSize * uvWidth;
 
-        int kernel = painterComputeShader.FindKernel("CSMain");
         painterComputeShader.SetInt("_UVTexWidth", uvWidth);
         painterComputeShader.SetInt("_UVTexHeight", uvHeight);
         painterComputeShader.SetInt("_MainTexWidth", mainWidth);
@@ -272,13 +270,15 @@ public class ProjectionPainter : MonoBehaviour
         painterComputeShader.SetInt("_SampleRadius", 2);
         painterComputeShader.SetVector("_BrushColor", brushColor);
 
-        painterComputeShader.SetTexture(kernel, "_UVTex", uvRenderTexture);
-        painterComputeShader.SetTexture(kernel, "_MainTex", paintRenderTexture);
+        painterComputeShader.SetTexture(computeKernel, "_UVTex", uvRenderTexture);
+        painterComputeShader.SetTexture(computeKernel, "_MainTex", paintRenderTexture);
+
 
         // Calculate the number of thread groups based on the UV texture size and 16x16 thread group size
         int threadGroupsX = Mathf.CeilToInt(uvWidth / 16.0f);
         int threadGroupsY = Mathf.CeilToInt(uvHeight / 16.0f);
-        painterComputeShader.Dispatch(kernel, threadGroupsX, threadGroupsY, 1);
+        painterComputeShader.Dispatch(computeKernel, threadGroupsX, threadGroupsY, 1);
+
 
     }
 
