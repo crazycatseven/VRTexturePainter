@@ -1,19 +1,23 @@
 using UnityEngine;
 using UnityEngine.Rendering; // for CommandBuffer
+using UnityEngine.InputSystem;
 
-[RequireComponent(typeof(Camera))]
 public class ProjectionPainter : MonoBehaviour
 {
 
-    [Header("Painter Camera")]
-    private Camera paintCamera;              // Camera used for UV sampling
-    public float paintCameraDistance = 1f;
 
+    [Header("Input Settings")]
+    public InputActionReference paintAction;
 
     [Header("References")]
     public Shader uvShader;                  // UV visualization shader
     public Renderer targetRenderer;          // Target object to paint on
-    public Camera mainCamera;                // For view/projection matrices
+    public Transform brushTransform;         // VR Controller or brush transform
+
+    [Header("Paint Camera Settings")]
+    private Camera paintCamera;              // Generated paint camera
+    public float paintCameraDistance = 0.05f;  // Distance from brush tip
+    public float paintCameraFOV = 30f;        // Narrow FOV for precise painting
 
     [Header("Texture / RenderTexture Settings")]
     public RenderTextureQuality uvRenderTextureQuality = RenderTextureQuality.Medium;
@@ -22,10 +26,23 @@ public class ProjectionPainter : MonoBehaviour
 
     [Header("Brush Settings")]
     public Color brushColor = Color.red;
-    [Range(1, 100)]
-    public float brushRadius = 10;
-    public float worldSpaceRadius = 0.1f;
+    [Range(0.001f, 0.1f)]
+    public float brushSize = 0.01f;          // World space brush size
 
+    [Header("Visualization Settings")]
+    private LineRenderer brushGuideLineRenderer;
+    private GameObject brushVisualizer;
+    public Material brushVisualizerMaterial;
+    public float guideLineLength = 0.2f;
+    [Tooltip("Angle offset for guide line in degrees")]
+    public Vector3 guideLineRotationOffset = new Vector3(0, 0, 0);
+
+    public Color normalColor = Color.white;
+    public Color hoverColor = Color.yellow;
+
+    [Header("Debug Settings")]
+    public MeshRenderer debugMeshRenderer;
+    private Material debugPlaneMaterial;
 
     // Store texture pixels
     private Color[] mainTexPixels;
@@ -50,23 +67,26 @@ public class ProjectionPainter : MonoBehaviour
         SetupMaterialAndTexture();
         SetupRenderTextures();
         SetupPaintCamera();
+        SetupVisualizers();
+        SetupDebugPlane();
     }
+
 
     private bool ValidateReferences()
     {
         if (targetRenderer == null)
         {
-            Debug.LogError("targetRenderer not assigned!");
+            Debug.LogError("Target renderer not assigned!");
             return false;
         }
         if (uvShader == null)
         {
-            Debug.LogError("uvShader not assigned!");
+            Debug.LogError("UV shader not assigned!");
             return false;
         }
-        if (mainCamera == null)
+        if (brushTransform == null)
         {
-            Debug.LogError("mainCamera not assigned!");
+            Debug.LogError("Brush transform not assigned!");
             return false;
         }
         return true;
@@ -110,63 +130,93 @@ public class ProjectionPainter : MonoBehaviour
         );
     }
 
-    private void Update()
-
-    {
-        if (Input.GetMouseButton(0))
-        {
-            Paint();
-        }
-        else{
-            UpdatePaintCameraPosition(Input.mousePosition);
-        }
-    }
-
-    // ================================ PAINT CAMERA ================================
-
     private void SetupPaintCamera()
     {
         GameObject paintCamObj = new GameObject("Paint Camera");
         paintCamera = paintCamObj.AddComponent<Camera>();
-        paintCamera.enabled= false;
+        paintCamera.enabled = false;  // We only use it for rendering to RT
         paintCamera.clearFlags = CameraClearFlags.SolidColor;
         paintCamera.backgroundColor = Color.clear;
         paintCamera.cullingMask = 1 << targetRenderer.gameObject.layer;
         paintCamera.nearClipPlane = 0.01f;
+        paintCamera.farClipPlane = 1000f;
+        paintCamera.fieldOfView = paintCameraFOV;
     }
 
-    private void UpdatePaintCameraPosition(Vector2 mousePos)
+    private void UpdatePaintCameraTransform()
     {
-        // Cast a ray from the main camera
-        Ray ray = mainCamera.ScreenPointToRay(mousePos);
-        RaycastHit hit;
+        if (brushTransform == null || paintCamera == null) return;
 
-        if (Physics.Raycast(ray, out hit, Mathf.Infinity, 1 << targetRenderer.gameObject.layer))
+        // Calculate rotated direction using the same offset as guide line
+        Quaternion offsetRotation = Quaternion.Euler(guideLineRotationOffset);
+        Vector3 offsetDirection = offsetRotation * brushTransform.forward;
+
+        // Position the paint camera behind the brush tip
+        paintCamera.transform.position = brushTransform.position - offsetDirection * paintCameraDistance;
+        paintCamera.transform.forward = offsetDirection;
+    }
+
+    private void Update()
+    {
+        UpdatePaintCameraTransform();
+        UpdateVisualizers();
+
+        // Check trigger value every frame
+        if (paintAction != null)
         {
-            Vector3 paintPos = hit.point + hit.normal * paintCameraDistance;
-            paintCamera.transform.position = paintPos;
-            paintCamera.transform.LookAt(hit.point, Vector3.up);
+            float triggerValue = paintAction.action.ReadValue<float>();
 
-            float worldSpaceBrushSize = brushRadius * 0.01f;
-            float halfFOV = Mathf.Atan2(worldSpaceBrushSize, paintCameraDistance);
-            paintCamera.fieldOfView = halfFOV * 2.0f * Mathf.Rad2Deg;
-            paintCamera.nearClipPlane = paintCameraDistance * 0.5f;
+            if (triggerValue > 0)
+            {
+                Paint();
+            }
+        }
+    }
+
+    private void SetupDebugPlane()
+    {
+        if (debugMeshRenderer == null) return;
+
+        // Create and setup material for debug plane
+        debugPlaneMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+        debugPlaneMaterial.mainTexture = uvRenderTexture;
+        debugMeshRenderer.material = debugPlaneMaterial;
+    }
+
+
+
+    // ================================  INPUT  ================================
+    private void OnEnable()
+    {
+        if (paintAction != null)
+        {
+            paintAction.action.Enable();
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (paintAction != null)
+        {
+            paintAction.action.Disable();
         }
     }
 
 
     // ================================  PAINT CORE  ================================
 
+
+
     private void Paint()
     {
-        if (paintCamera == null || uvMaterial == null) return;
-
-        Vector3 mousePos = Input.mousePosition;
-        UpdatePaintCameraPosition(mousePos);
-
+        if (paintCamera == null || uvMaterial == null){
+            Debug.LogError("Paint camera or UV material is not set");
+            return;
+        }
+        
         RenderUVPass();
         ReadbackUVData();
-        ApplyPaint(mousePos);
+        ApplyPaint();
     }
 
     private void RenderUVPass()
@@ -178,9 +228,15 @@ public class ProjectionPainter : MonoBehaviour
         cmd.DrawRenderer(targetRenderer, uvMaterial, 0, 0);
         Graphics.ExecuteCommandBuffer(cmd);
         cmd.Release();
+
+        if (debugMeshRenderer != null)
+        {
+            debugMeshRenderer.material.mainTexture = uvRenderTexture;
+        }
     }
 
     private void ReadbackUVData()
+
     {
         RenderTexture.active = uvRenderTexture;
         readbackTexture.ReadPixels(new Rect(0, 0, uvRenderTexture.width, uvRenderTexture.height), 0, 0);
@@ -188,9 +244,10 @@ public class ProjectionPainter : MonoBehaviour
         RenderTexture.active = null;
     }
 
-    private void ApplyPaint(Vector3 mousePos)
+    private void ApplyPaint()
     {
-        Vector2 brushCenter = GetBrushCenterInRT(mousePos);
+        Vector2 brushCenter = GetBrushCenterInRT();
+        Debug.Log($"Brush Center in RT: {brushCenter}");
         Color[] uvColors = readbackTexture.GetPixels();
         int rtW = uvRenderTexture.width;
         int rtH = uvRenderTexture.height;
@@ -204,7 +261,7 @@ public class ProjectionPainter : MonoBehaviour
             for (int px = 0; px < rtW; px++)
             {
                 float dist = Vector2.Distance(new Vector2(px, py), brushCenter);
-                if (dist > brushRadius) continue;
+                if (dist > brushSize) continue;
 
                 Vector2 uv = SampleUV(px, py, uvColors, rtW, rtH, sampleRadius);
                 PaintAtUV(uv, dist, paintRadius, ref paintCount);
@@ -259,7 +316,7 @@ public class ProjectionPainter : MonoBehaviour
                 if (paintDist > radius)
                     continue;
 
-                float brushStrength = 1.0f - (dist / brushRadius);
+                float brushStrength = 1.0f - (dist / brushSize);
                 brushStrength *= 1.0f - (paintDist / radius);
                 brushStrength = Mathf.SmoothStep(0, 1, brushStrength);
 
@@ -270,41 +327,108 @@ public class ProjectionPainter : MonoBehaviour
         }
     }
 
-    private Vector2 GetBrushCenterInRT(Vector3 screenPos)
+    private Vector2 GetBrushCenterInRT()
     {
-        Vector2 viewportPoint = paintCamera.ScreenToViewportPoint(screenPos);
         return new Vector2(
-            viewportPoint.x * uvRenderTexture.width,
-            viewportPoint.y * uvRenderTexture.height
-        );
+        uvRenderTexture.width * 0.5f,
+        uvRenderTexture.height * 0.5f
+    );
+    }
+
+    // ================================  VISUALIZATION  ================================
+    private void SetupVisualizers()
+    {
+        // Setup guide line
+        GameObject lineObj = new GameObject("Brush Guide Line");
+        lineObj.transform.SetParent(brushTransform);
+        brushGuideLineRenderer = lineObj.AddComponent<LineRenderer>();
+        
+        // Create and configure the material
+        Material lineMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+        lineMaterial.color = normalColor;  // Set initial color
+        
+        brushGuideLineRenderer.material = lineMaterial;
+        brushGuideLineRenderer.startWidth = 0.001f;
+        brushGuideLineRenderer.endWidth = 0.001f;
+        brushGuideLineRenderer.positionCount = 2;
+        
+        // Enable use of vertex colors
+        brushGuideLineRenderer.useWorldSpace = true;
+        brushGuideLineRenderer.colorGradient = new Gradient()
+        {
+            mode = GradientMode.Fixed,
+            alphaKeys = new GradientAlphaKey[] { new GradientAlphaKey(1, 0), new GradientAlphaKey(1, 1) },
+            colorKeys = new GradientColorKey[] { new GradientColorKey(normalColor, 0), new GradientColorKey(normalColor, 1) }
+        };
+    }
+
+    private void UpdateVisualizers()
+    {
+        if (brushTransform == null || brushGuideLineRenderer == null) return;
+
+        // Calculate rotated direction using offset
+        Quaternion offsetRotation = Quaternion.Euler(guideLineRotationOffset);
+        Vector3 offsetDirection = offsetRotation * brushTransform.forward;
+
+        RaycastHit hit;
+        Vector3 startPos = brushTransform.position;
+        bool didHit = Physics.Raycast(
+            startPos, 
+            offsetDirection, 
+            out hit, 
+            guideLineLength,
+            1 << targetRenderer.gameObject.layer);
+
+        if (didHit && hit.collider.gameObject == targetRenderer.gameObject)
+        {
+            brushGuideLineRenderer.SetPosition(0, startPos);
+            brushGuideLineRenderer.SetPosition(1, hit.point);
+
+            // Update color directly on the material
+            brushGuideLineRenderer.material.color = hoverColor;
+            // Also update the gradient
+            brushGuideLineRenderer.startColor = hoverColor;
+            brushGuideLineRenderer.endColor = hoverColor;
+        }
+        else
+        {
+            brushGuideLineRenderer.SetPosition(0, brushTransform.position);
+            brushGuideLineRenderer.SetPosition(1, brushTransform.position + offsetDirection * guideLineLength);
+
+            // Reset color directly on the material
+            brushGuideLineRenderer.material.color = normalColor;
+            // Also update the gradient
+            brushGuideLineRenderer.startColor = normalColor;
+            brushGuideLineRenderer.endColor = normalColor;
+        }
     }
 
     private void OnDrawGizmos()
     {
-        if (!Application.isPlaying || paintCamera == null) return;
+        if (!Application.isPlaying || brushTransform == null) return;
 
-        // Draw paint camera frustum
-        Gizmos.color = Color.yellow;
-        Matrix4x4 matrix = Matrix4x4.TRS(
-            paintCamera.transform.position,
-            paintCamera.transform.rotation,
-            Vector3.one
-        );
-        Gizmos.matrix = matrix;
-        Gizmos.DrawFrustum(
-            Vector3.zero,
-            paintCamera.fieldOfView,
-            paintCameraDistance * 2,
-            0.01f,
-            paintCamera.aspect
-        );
+        // Draw brush position and direction
+        Gizmos.color = Color.green;
+        Gizmos.DrawWireSphere(brushTransform.position, brushSize);
+        Gizmos.DrawLine(brushTransform.position, brushTransform.position + brushTransform.forward * 0.1f);
 
-        // Draw brush area
-        Ray ray = mainCamera.ScreenPointToRay(Input.mousePosition);
-        if (Physics.Raycast(ray, out RaycastHit hit, 1000f, 1 << targetRenderer.gameObject.layer))
+        // Draw paint camera position and frustum
+        if (paintCamera != null)
         {
-            Gizmos.color = Color.green;
-            Gizmos.DrawWireSphere(hit.point, brushRadius * 0.01f);
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawWireSphere(paintCamera.transform.position, 0.01f);
+            Gizmos.matrix = Matrix4x4.TRS(
+                paintCamera.transform.position,
+                paintCamera.transform.rotation,
+                Vector3.one
+            );
+            Gizmos.DrawFrustum(
+                Vector3.zero,
+                paintCamera.fieldOfView,
+                paintCamera.farClipPlane,
+                paintCamera.nearClipPlane,
+                paintCamera.aspect
+            );
         }
     }
 
