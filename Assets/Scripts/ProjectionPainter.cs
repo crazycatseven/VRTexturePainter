@@ -248,33 +248,38 @@ public class ProjectionPainter : MonoBehaviour
         }
     }
 
-    private void PaintWithComputeShader(){
-        if (painterComputeShader == null || paintRenderTexture == null || uvRenderTexture == null)
-        {
-            Debug.LogError("Compute shader or render textures are not set");
+    private void PaintWithComputeShader() {
+        if (painterComputeShader == null || paintRenderTexture == null || uvRenderTexture == null) {
+            Debug.LogError("Compute shader or necessary textures are not set");
             return;
         }
 
         int uvWidth = uvRenderTexture.width;
         int uvHeight = uvRenderTexture.height;
-
         int mainWidth = paintRenderTexture.width;
         int mainHeight = paintRenderTexture.height;
+
+        // Compute the brush size in UV texture pixels
+        float brushSizeUV = brushSize * uvWidth;
 
         int kernel = painterComputeShader.FindKernel("CSMain");
         painterComputeShader.SetInt("_UVTexWidth", uvWidth);
         painterComputeShader.SetInt("_UVTexHeight", uvHeight);
         painterComputeShader.SetInt("_MainTexWidth", mainWidth);
         painterComputeShader.SetInt("_MainTexHeight", mainHeight);
-        painterComputeShader.SetFloat("_BrushSize", brushSize);
-        painterComputeShader.SetFloat("_PaintRadius", brushSize > 0 ? paintRadius : 5); // 这里 paintRadius 直接以像素为单位使用
+        painterComputeShader.SetFloat("_BrushSize", brushSizeUV);
+        painterComputeShader.SetFloat("_PaintRadius", brushSizeUV > 0 ? paintRadius : 5);
         painterComputeShader.SetInt("_SampleRadius", 2);
         painterComputeShader.SetVector("_BrushColor", brushColor);
 
         painterComputeShader.SetTexture(kernel, "_UVTex", uvRenderTexture);
         painterComputeShader.SetTexture(kernel, "_MainTex", paintRenderTexture);
 
-        painterComputeShader.Dispatch(kernel, 1, 1, 1);
+        // Calculate the number of thread groups based on the UV texture size and 16x16 thread group size
+        int threadGroupsX = Mathf.CeilToInt(uvWidth / 16.0f);
+        int threadGroupsY = Mathf.CeilToInt(uvHeight / 16.0f);
+        painterComputeShader.Dispatch(kernel, threadGroupsX, threadGroupsY, 1);
+
     }
 
 
