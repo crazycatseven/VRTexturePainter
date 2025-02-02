@@ -247,8 +247,10 @@ public class ProjectionPainter : MonoBehaviour
         }
     }
 
-    private void PaintWithComputeShader() {
-        if (painterComputeShader == null || paintRenderTexture == null || uvRenderTexture == null) {
+    private void PaintWithComputeShader()
+    {
+        if (painterComputeShader == null || paintRenderTexture == null || uvRenderTexture == null)
+        {
             Debug.LogError("Compute shader or necessary textures are not set");
             return;
         }
@@ -261,24 +263,44 @@ public class ProjectionPainter : MonoBehaviour
         // Compute the brush size in UV texture pixels
         float brushSizeUV = brushSize * uvWidth;
 
+        // Compute the rectangular region affected by the brush
+        Vector2 uvCenter = new Vector2(uvWidth * 0.5f, uvHeight * 0.5f);
+        int brushRadius = Mathf.CeilToInt(brushSizeUV);
+        
+
+        // Compute the region to process (ensuring it doesn't exceed texture boundaries)
+        int startX = Mathf.Max(0, Mathf.FloorToInt(uvCenter.x - brushRadius));
+        int startY = Mathf.Max(0, Mathf.FloorToInt(uvCenter.y - brushRadius));
+        int endX = Mathf.Min(uvWidth, Mathf.CeilToInt(uvCenter.x + brushRadius));
+
+        int endY = Mathf.Min(uvHeight, Mathf.CeilToInt(uvCenter.y + brushRadius));
+        
+        // Calculate the size of the region
+        int regionWidth = endX - startX;
+        int regionHeight = endY - startY;
+
+
+        int kernel = painterComputeShader.FindKernel("CSMain");
+        
+        // Pass region information to Compute Shader
         painterComputeShader.SetInt("_UVTexWidth", uvWidth);
         painterComputeShader.SetInt("_UVTexHeight", uvHeight);
         painterComputeShader.SetInt("_MainTexWidth", mainWidth);
         painterComputeShader.SetInt("_MainTexHeight", mainHeight);
         painterComputeShader.SetFloat("_BrushSize", brushSizeUV);
+
         painterComputeShader.SetFloat("_PaintRadius", brushSizeUV > 0 ? paintRadius : 5);
         painterComputeShader.SetInt("_SampleRadius", 2);
         painterComputeShader.SetVector("_BrushColor", brushColor);
+        painterComputeShader.SetInts("_RegionStart", startX, startY);
 
-        painterComputeShader.SetTexture(computeKernel, "_UVTex", uvRenderTexture);
-        painterComputeShader.SetTexture(computeKernel, "_MainTex", paintRenderTexture);
+        painterComputeShader.SetTexture(kernel, "_UVTex", uvRenderTexture);
+        painterComputeShader.SetTexture(kernel, "_MainTex", paintRenderTexture);
 
-
-        // Calculate the number of thread groups based on the UV texture size and 16x16 thread group size
-        int threadGroupsX = Mathf.CeilToInt(uvWidth / 16.0f);
-        int threadGroupsY = Mathf.CeilToInt(uvHeight / 16.0f);
-        painterComputeShader.Dispatch(computeKernel, threadGroupsX, threadGroupsY, 1);
-
+        // Calculate the number of thread groups needed (based on the region size, not the entire texture)
+        int threadGroupsX = Mathf.CeilToInt(regionWidth / 16.0f);
+        int threadGroupsY = Mathf.CeilToInt(regionHeight / 16.0f);
+        painterComputeShader.Dispatch(kernel, threadGroupsX, threadGroupsY, 1);
 
     }
 

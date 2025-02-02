@@ -28,14 +28,17 @@ float _PaintRadius;
 int _SampleRadius;
 float4 _BrushColor;
 
+int2 _RegionStart;
+
 // Use 16x16 threads per thread group to leverage GPU parallelism
 [numthreads(16,16,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
-    // Compute the global pixel coordinates in the UV texture
-    int x = id.x;
-    int y = id.y;
+    // Calculate the actual UV texture coordinates (adding the region offset)
+    int x = id.x + _RegionStart.x;
+    int y = id.y + _RegionStart.y;
     
+
     // Skip threads outside the texture bounds
     if (x >= _UVTexWidth || y >= _UVTexHeight)
         return;
