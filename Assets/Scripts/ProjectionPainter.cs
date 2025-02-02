@@ -24,10 +24,17 @@ public class ProjectionPainter : MonoBehaviour
     private RenderTexture uvRenderTexture;
     private Texture2D readbackTexture;
 
+    [Header("Compute Shader")]
+    public ComputeShader painterComputeShader;
+    private RenderTexture paintRenderTexture;
+    private int texWidth, texHeight;
+
+
     [Header("Brush Settings")]
     public Color brushColor = Color.red;
     [Range(0.001f, 0.1f)]
     public float brushSize = 0.01f;          // World space brush size
+    public float paintRadius = 5.0f;         // Brush radius in pixels
 
     [Header("Visualization Settings")]
     private LineRenderer brushGuideLineRenderer;
@@ -43,11 +50,6 @@ public class ProjectionPainter : MonoBehaviour
     [Header("Debug Settings")]
     public MeshRenderer debugMeshRenderer;
     private Material debugPlaneMaterial;
-
-    // Store texture pixels
-    private Color[] mainTexPixels;
-    private Texture2D mainTex2D;
-    private int texWidth, texHeight;
 
     // Material for UV shader
     private Material uvMaterial;
@@ -96,21 +98,33 @@ public class ProjectionPainter : MonoBehaviour
     {
         uvMaterial = new Material(uvShader);
 
-        mainTex2D = targetRenderer.material.mainTexture as Texture2D;
-        if (mainTex2D == null)
+        Texture2D originalMainTex = targetRenderer.material.mainTexture as Texture2D;
+        if (originalMainTex == null)
         {
             Debug.LogError("Material's main texture is not a Texture2D or is null!");
             return;
         }
 
-        mainTex2D = Instantiate(mainTex2D);
-        targetRenderer.material.mainTexture = mainTex2D;
-        texWidth = mainTex2D.width;
-        texHeight = mainTex2D.height;
-        mainTexPixels = mainTex2D.GetPixels();
+        texWidth = originalMainTex.width;
+        texHeight = originalMainTex.height;
+
+        // Create a RenderTexture supporting random write
+        paintRenderTexture = new RenderTexture(texWidth, texHeight, 0, RenderTextureFormat.ARGBFloat);
+        paintRenderTexture.enableRandomWrite = true;
+        paintRenderTexture.useMipMap = false;
+        paintRenderTexture.filterMode = FilterMode.Point;
+        paintRenderTexture.wrapMode = TextureWrapMode.Clamp;
+        paintRenderTexture.Create();
+
+        // Copy the original texture to the paintRenderTexture
+        Graphics.Blit(originalMainTex, paintRenderTexture);
+
+        // Update the targetRenderer's material to use the paintRenderTexture
+        targetRenderer.material.mainTexture = paintRenderTexture;
     }
 
     private void SetupRenderTextures()
+
     {
         int resolution = (int)uvRenderTextureQuality;
 
@@ -215,8 +229,7 @@ public class ProjectionPainter : MonoBehaviour
         }
         
         RenderUVPass();
-        ReadbackUVData();
-        ApplyPaint();
+        PaintWithComputeShader();
     }
 
     private void RenderUVPass()
@@ -235,105 +248,35 @@ public class ProjectionPainter : MonoBehaviour
         }
     }
 
-    private void ReadbackUVData()
-
-    {
-        RenderTexture.active = uvRenderTexture;
-        readbackTexture.ReadPixels(new Rect(0, 0, uvRenderTexture.width, uvRenderTexture.height), 0, 0);
-        readbackTexture.Apply();
-        RenderTexture.active = null;
-    }
-
-    private void ApplyPaint()
-    {
-        Vector2 brushCenter = GetBrushCenterInRT();
-        Debug.Log($"Brush Center in RT: {brushCenter}");
-        Color[] uvColors = readbackTexture.GetPixels();
-        int rtW = uvRenderTexture.width;
-        int rtH = uvRenderTexture.height;
-        int paintCount = 0;
-
-        const int sampleRadius = 2;
-        int paintRadius = 5; // Increased for better coverage
-
-        for (int py = 0; py < rtH; py++)
+    private void PaintWithComputeShader(){
+        if (painterComputeShader == null || paintRenderTexture == null || uvRenderTexture == null)
         {
-            for (int px = 0; px < rtW; px++)
-            {
-                float dist = Vector2.Distance(new Vector2(px, py), brushCenter);
-                if (dist > brushSize) continue;
-
-                Vector2 uv = SampleUV(px, py, uvColors, rtW, rtH, sampleRadius);
-                PaintAtUV(uv, dist, paintRadius, ref paintCount);
-            }
+            Debug.LogError("Compute shader or render textures are not set");
+            return;
         }
 
-        mainTex2D.SetPixels(mainTexPixels);
-        mainTex2D.Apply();
+        int uvWidth = uvRenderTexture.width;
+        int uvHeight = uvRenderTexture.height;
+
+        int mainWidth = paintRenderTexture.width;
+        int mainHeight = paintRenderTexture.height;
+
+        int kernel = painterComputeShader.FindKernel("CSMain");
+        painterComputeShader.SetInt("_UVTexWidth", uvWidth);
+        painterComputeShader.SetInt("_UVTexHeight", uvHeight);
+        painterComputeShader.SetInt("_MainTexWidth", mainWidth);
+        painterComputeShader.SetInt("_MainTexHeight", mainHeight);
+        painterComputeShader.SetFloat("_BrushSize", brushSize);
+        painterComputeShader.SetFloat("_PaintRadius", brushSize > 0 ? paintRadius : 5); // 这里 paintRadius 直接以像素为单位使用
+        painterComputeShader.SetInt("_SampleRadius", 2);
+        painterComputeShader.SetVector("_BrushColor", brushColor);
+
+        painterComputeShader.SetTexture(kernel, "_UVTex", uvRenderTexture);
+        painterComputeShader.SetTexture(kernel, "_MainTex", paintRenderTexture);
+
+        painterComputeShader.Dispatch(kernel, 1, 1, 1);
     }
 
-    private Vector2 SampleUV(int px, int py, Color[] uvColors, int rtW, int rtH, int sampleRadius)
-    {
-        float u = 0, v = 0;
-        float totalWeight = 0;
-
-        for (int offsetX = -sampleRadius; offsetX <= sampleRadius; offsetX++)
-        {
-            for (int offsetY = -sampleRadius; offsetY <= sampleRadius; offsetY++)
-            {
-                int sampleX = Mathf.Clamp(px + offsetX, 0, rtW - 1);
-                int sampleY = Mathf.Clamp(py + offsetY, 0, rtH - 1);
-                int index = sampleY * rtW + sampleX;
-
-                float distance = Mathf.Sqrt(offsetX * offsetX + offsetY * offsetY);
-                float weight = Mathf.Exp(-(distance * distance) / (2 * sampleRadius * sampleRadius));
-                totalWeight += weight;
-
-                u += uvColors[index].r * weight;
-                v += uvColors[index].g * weight;
-            }
-        }
-
-        return new Vector2(u / totalWeight, v / totalWeight);
-    }
-
-    private void PaintAtUV(Vector2 uv, float dist, int radius, ref int paintCount)
-    {
-        float texXf = uv.x * texWidth;
-        float texYf = uv.y * texHeight;
-
-        for (int offsetX = -radius; offsetX <= radius; offsetX++)
-        {
-            for (int offsetY = -radius; offsetY <= radius; offsetY++)
-            {
-                int paintX = Mathf.FloorToInt(texXf) + offsetX;
-                int paintY = Mathf.FloorToInt(texYf) + offsetY;
-
-                if (paintX < 0 || paintX >= texWidth || paintY < 0 || paintY >= texHeight)
-                    continue;
-
-                float paintDist = Mathf.Sqrt(offsetX * offsetX + offsetY * offsetY);
-                if (paintDist > radius)
-                    continue;
-
-                float brushStrength = 1.0f - (dist / brushSize);
-                brushStrength *= 1.0f - (paintDist / radius);
-                brushStrength = Mathf.SmoothStep(0, 1, brushStrength);
-
-                int texIdx = paintY * texWidth + paintX;
-                mainTexPixels[texIdx] = Color.Lerp(mainTexPixels[texIdx], brushColor, brushStrength);
-                paintCount++;
-            }
-        }
-    }
-
-    private Vector2 GetBrushCenterInRT()
-    {
-        return new Vector2(
-        uvRenderTexture.width * 0.5f,
-        uvRenderTexture.height * 0.5f
-    );
-    }
 
     // ================================  VISUALIZATION  ================================
     private void SetupVisualizers()
@@ -403,39 +346,13 @@ public class ProjectionPainter : MonoBehaviour
         }
     }
 
-    private void OnDrawGizmos()
-    {
-        if (!Application.isPlaying || brushTransform == null) return;
-
-        // Draw brush position and direction
-        Gizmos.color = Color.green;
-        Gizmos.DrawWireSphere(brushTransform.position, brushSize);
-        Gizmos.DrawLine(brushTransform.position, brushTransform.position + brushTransform.forward * 0.1f);
-
-        // Draw paint camera position and frustum
-        if (paintCamera != null)
-        {
-            Gizmos.color = Color.yellow;
-            Gizmos.DrawWireSphere(paintCamera.transform.position, 0.01f);
-            Gizmos.matrix = Matrix4x4.TRS(
-                paintCamera.transform.position,
-                paintCamera.transform.rotation,
-                Vector3.one
-            );
-            Gizmos.DrawFrustum(
-                Vector3.zero,
-                paintCamera.fieldOfView,
-                paintCamera.farClipPlane,
-                paintCamera.nearClipPlane,
-                paintCamera.aspect
-            );
-        }
-    }
-
     private void OnDestroy()
     {
         if (uvRenderTexture != null)
             uvRenderTexture.Release();
+
+        if (paintRenderTexture != null)
+            paintRenderTexture.Release();
 
         if (paintCamera != null)
             Destroy(paintCamera.gameObject);

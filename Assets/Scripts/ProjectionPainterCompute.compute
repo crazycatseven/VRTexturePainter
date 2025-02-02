@@ -1,0 +1,104 @@
+#pragma kernel CSMain
+
+// _MainTex：Target texture (RWTexture2D) for painting
+// _UVTex：UV mapping texture (RenderTexture) used for sampling UV coordinates
+RWTexture2D<float4> _MainTex;
+Texture2D<float4> _UVTex;
+
+SamplerState samplerLinear
+{
+    Filter = MIN_MAG_MIP_LINEAR;
+    AddressU = Clamp;
+    AddressV = Clamp;
+};
+
+// Dimensions of the UV and main textures
+int _UVTexWidth;
+int _UVTexHeight;
+int _MainTexWidth;
+int _MainTexHeight;
+
+// Brush parameters:
+// _BrushSize    : Brush radius in UV texture space (in pixels, e.g., brushSize * _UVTexWidth)
+// _PaintRadius  : Brush radius in main texture space (in pixels)
+// _SampleRadius : Neighborhood radius for weighted sampling in the UV texture (e.g., 2)
+// _BrushColor   : The color applied by the brush
+float _BrushSize;
+float _PaintRadius;
+int _SampleRadius;
+float4 _BrushColor;
+
+[numthreads(1,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    // Calculate the center of the UV texture (acts as the brush center)
+    float2 uvCenter = float2(_UVTexWidth, _UVTexHeight) * 0.5;
+
+    // Loop over every pixel of the UV texture.
+    // Only the area inside the brush radius will contribute.
+    for (int y = 0; y < _UVTexHeight; y++)
+    {
+        for (int x = 0; x < _UVTexWidth; x++)
+        {
+            float2 uvPos = float2(x, y);
+            float distanceToUVCenter = distance(uvPos, uvCenter);
+            if (distanceToUVCenter > _BrushSize)
+                continue;
+
+            // Calculate a weighted average UV coordinate from neighboring samples
+            float2 weightedUV = float2(0, 0);
+            float totalWeight = 0.0;
+            for (int offsetY = -_SampleRadius; offsetY <= _SampleRadius; offsetY++)
+            {
+                for (int offsetX = -_SampleRadius; offsetX <= _SampleRadius; offsetX++)
+                {
+                    int sampleX = clamp(x + offsetX, 0, _UVTexWidth - 1);
+                    int sampleY = clamp(y + offsetY, 0, _UVTexHeight - 1);
+                    int2 samplePos = int2(sampleX, sampleY);
+                    float2 sampleUV = _UVTex.Load(int3(samplePos, 0)).rg;
+                    float sampleDistance = sqrt((float)(offsetX * offsetX + offsetY * offsetY));
+                    float weight = exp(-(sampleDistance * sampleDistance) / (2.0 * _SampleRadius * _SampleRadius));
+                    weightedUV += sampleUV * weight;
+                    totalWeight += weight;
+                }
+            }
+            float2 averagedUV = weightedUV / totalWeight;
+
+            // Convert the averaged UV coordinate to a pixel coordinate on the main texture
+            float2 mainTexturePosF = averagedUV * float2(_MainTexWidth, _MainTexHeight);
+
+            // Determine the local paint area in the main texture based on the paint radius
+            int centerX = (int)floor(mainTexturePosF.x);
+            int centerY = (int)floor(mainTexturePosF.y);
+            int minX = centerX - (int)_PaintRadius;
+            int maxX = centerX + (int)_PaintRadius;
+            int minY = centerY - (int)_PaintRadius;
+            int maxY = centerY + (int)_PaintRadius;
+
+            // Iterate over each pixel in the paint area of the main texture
+            for (int ty = minY; ty <= maxY; ty++)
+            {
+                for (int tx = minX; tx <= maxX; tx++)
+                {
+                    // Skip pixels outside the main texture bounds
+                    if (tx < 0 || tx >= _MainTexWidth || ty < 0 || ty >= _MainTexHeight)
+                        continue;
+
+                    float2 currentPixelPos = float2(tx, ty);
+                    float localDistance = distance(currentPixelPos, mainTexturePosF);
+                    if (localDistance > _PaintRadius)
+                        continue;
+
+                    // Calculate brush strength based on the distance in both UV and main texture spaces
+                    float brushStrength = (1.0 - (distanceToUVCenter / _BrushSize)) * (1.0 - (localDistance / _PaintRadius));
+                    brushStrength = smoothstep(0.0, 1.0, brushStrength);
+
+                    // Blend the existing color with the brush color based on the computed strength
+                    float4 existingColor = _MainTex[int2(tx, ty)];
+                    float4 blendedColor = lerp(existingColor, _BrushColor, brushStrength);
+                    _MainTex[int2(tx, ty)] = blendedColor;
+                }
+            }
+        }
+    }
+} 
