@@ -23671,7 +23671,7 @@ MonoBehaviour:
   uvRenderTextureQuality: 512
   painterComputeShader: {fileID: 7200000, guid: 873627b9154eed741b280d90719b9c1a, type: 3}
   brushColor: {r: 1, g: 0, b: 0, a: 1}
-  brushSize: 0.01
+  brushSize: 10
   paintRadius: 5
   brushVisualizerMaterial: {fileID: 0}
   guideLineLength: 0.5

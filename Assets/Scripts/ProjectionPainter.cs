@@ -32,9 +32,8 @@ public class ProjectionPainter : MonoBehaviour
 
     [Header("Brush Settings")]
     public Color brushColor = Color.red;
-    [Range(0.001f, 0.1f)]
-    public float brushSize = 0.01f;          // World space brush size
-    public float paintRadius = 5.0f;         // Brush radius in pixels
+
+    public int brushSize = 10;
 
     [Header("Visualization Settings")]
     private LineRenderer brushGuideLineRenderer;
@@ -133,13 +132,21 @@ public class ProjectionPainter : MonoBehaviour
         uvRenderTexture = new RenderTexture(resolution, resolution, 0, RenderTextureFormat.ARGBFloat);
         uvRenderTexture.enableRandomWrite = true;
         uvRenderTexture.useMipMap = false;
-        uvRenderTexture.filterMode = FilterMode.Point;
+        uvRenderTexture.filterMode = FilterMode.Bilinear;
         uvRenderTexture.wrapMode = TextureWrapMode.Clamp;
         uvRenderTexture.Create();
     }
 
-    private void SetupComputeShader() {
-        computeKernel = painterComputeShader.FindKernel("CSMain");
+    private void SetupComputeShader()
+    {
+        if (painterComputeShader != null)
+        {
+            computeKernel = painterComputeShader.FindKernel("CSMain");
+            if (computeKernel < 0)
+            {
+                Debug.LogError("Compute kernel 'CSMain' not found!");
+            }
+        }
     }
 
 
@@ -154,6 +161,7 @@ public class ProjectionPainter : MonoBehaviour
         paintCamera.nearClipPlane = 0.01f;
         paintCamera.farClipPlane = 1000f;
         paintCamera.fieldOfView = paintCameraFOV;
+        paintCamera.aspect = 1.0f;
     }
 
     private void UpdatePaintCameraTransform()
@@ -217,9 +225,6 @@ public class ProjectionPainter : MonoBehaviour
 
 
     // ================================  PAINT CORE  ================================
-
-
-
     private void Paint()
     {
         if (paintCamera == null || uvMaterial == null){
@@ -234,17 +239,24 @@ public class ProjectionPainter : MonoBehaviour
     private void RenderUVPass()
     {
         CommandBuffer cmd = new CommandBuffer { name = "Render UV pass" };
+        
         cmd.SetRenderTarget(uvRenderTexture);
         cmd.ClearRenderTarget(true, true, Color.clear);
+        
         cmd.SetViewProjectionMatrices(paintCamera.worldToCameraMatrix, paintCamera.projectionMatrix);
+        
+        // Render
         cmd.DrawRenderer(targetRenderer, uvMaterial, 0, 0);
+        
         Graphics.ExecuteCommandBuffer(cmd);
         cmd.Release();
 
+        // Debug display
         if (debugMeshRenderer != null)
         {
             debugMeshRenderer.material.mainTexture = uvRenderTexture;
         }
+
     }
 
     private void PaintWithComputeShader()
@@ -260,21 +272,18 @@ public class ProjectionPainter : MonoBehaviour
         int mainWidth = paintRenderTexture.width;
         int mainHeight = paintRenderTexture.height;
 
-        // Compute the brush size in UV texture pixels
-        float brushSizeUV = brushSize * uvWidth;
-
         // Compute the rectangular region affected by the brush
-        Vector2 uvCenter = new Vector2(uvWidth * 0.5f, uvHeight * 0.5f);
-        int brushRadius = Mathf.CeilToInt(brushSizeUV);
-        
+        int centerX = uvWidth / 2;
+        int centerY = uvHeight / 2;
+        int brushRadius = Mathf.Max(1, Mathf.CeilToInt(brushSize * 0.5f));
 
         // Compute the region to process (ensuring it doesn't exceed texture boundaries)
-        int startX = Mathf.Max(0, Mathf.FloorToInt(uvCenter.x - brushRadius));
-        int startY = Mathf.Max(0, Mathf.FloorToInt(uvCenter.y - brushRadius));
-        int endX = Mathf.Min(uvWidth, Mathf.CeilToInt(uvCenter.x + brushRadius));
 
-        int endY = Mathf.Min(uvHeight, Mathf.CeilToInt(uvCenter.y + brushRadius));
-        
+        int startX = Mathf.Max(0, centerX - brushRadius);
+        int startY = Mathf.Max(0, centerY - brushRadius);
+        int endX = Mathf.Min(uvWidth, centerX + brushRadius);
+        int endY = Mathf.Min(uvHeight, centerY + brushRadius);
+
         // Calculate the size of the region
         int regionWidth = endX - startX;
         int regionHeight = endY - startY;
@@ -287,21 +296,45 @@ public class ProjectionPainter : MonoBehaviour
         painterComputeShader.SetInt("_UVTexHeight", uvHeight);
         painterComputeShader.SetInt("_MainTexWidth", mainWidth);
         painterComputeShader.SetInt("_MainTexHeight", mainHeight);
-        painterComputeShader.SetFloat("_BrushSize", brushSizeUV);
-
-        painterComputeShader.SetFloat("_PaintRadius", brushSizeUV > 0 ? paintRadius : 5);
+        painterComputeShader.SetFloat("_BrushSize", brushSize);
+        painterComputeShader.SetInt("_BrushCenterX", centerX);
+        painterComputeShader.SetInt("_BrushCenterY", centerY);
         painterComputeShader.SetInt("_SampleRadius", 2);
         painterComputeShader.SetVector("_BrushColor", brushColor);
         painterComputeShader.SetInts("_RegionStart", startX, startY);
 
+
         painterComputeShader.SetTexture(kernel, "_UVTex", uvRenderTexture);
         painterComputeShader.SetTexture(kernel, "_MainTex", paintRenderTexture);
+            
+        // Use circular area calculation
+        int diameter = brushSize * 2;
+        int threadGroupSize = 16; // The size of one thread group
+        
 
-        // Calculate the number of thread groups needed (based on the region size, not the entire texture)
-        int threadGroupsX = Mathf.CeilToInt(regionWidth / 16.0f);
-        int threadGroupsY = Mathf.CeilToInt(regionHeight / 16.0f);
+        // Ensure the processing area is at least one complete thread group size
+        int dispatchSize = Mathf.CeilToInt((float)diameter / threadGroupSize) * threadGroupSize;
+        
+
+        // Calculate the new starting position to ensure the circular area is centered
+        startX = Mathf.Max(0, centerX - dispatchSize/2);
+        startY = Mathf.Max(0, centerY - dispatchSize/2);
+        
+
+        // Ensure it doesn't exceed the texture boundaries
+        startX = Mathf.Min(startX, uvWidth - dispatchSize);
+        startY = Mathf.Min(startY, uvHeight - dispatchSize);
+        
+
+        // Calculate the number of thread groups
+        int threadGroupsX = dispatchSize / threadGroupSize;
+        int threadGroupsY = dispatchSize / threadGroupSize;
+
+
+        painterComputeShader.SetInts("_RegionStart", startX, startY);
+        painterComputeShader.SetInt("_DispatchSize", dispatchSize);
+
         painterComputeShader.Dispatch(kernel, threadGroupsX, threadGroupsY, 1);
-
     }
 
 

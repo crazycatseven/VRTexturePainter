@@ -4,6 +4,7 @@
 // _UVTex: UV mapping texture (Texture2D) used for sampling UV coordinates
 RWTexture2D<float4> _MainTex;
 Texture2D<float4> _UVTex;
+Texture2D<float> _DepthTex;
 
 SamplerState samplerLinear
 {
@@ -20,118 +21,47 @@ int _MainTexHeight;
 
 // Brush parameters:
 // _BrushSize    : Brush radius in UV texture space (in pixels)
-// _PaintRadius  : Brush radius in main texture space (in pixels)
-// _SampleRadius : Neighborhood radius for weighted sampling in the UV texture (e.g., 2)
 // _BrushColor   : The color applied by the brush
 float _BrushSize;
-float _PaintRadius;
-int _SampleRadius;
 float4 _BrushColor;
+int _BrushCenterX;
+int _BrushCenterY;
 
 int2 _RegionStart;
+
+int _DispatchSize;
 
 // Use 16x16 threads per thread group to leverage GPU parallelism
 [numthreads(16,16,1)]
 void CSMain (uint3 id : SV_DispatchThreadID)
 {
-    // Calculate the actual UV texture coordinates (adding the region offset)
     int x = id.x + _RegionStart.x;
     int y = id.y + _RegionStart.y;
     
-
-    // Skip threads outside the texture bounds
     if (x >= _UVTexWidth || y >= _UVTexHeight)
         return;
-        
-    float2 uvPos = float2(x, y);
-    float2 uvCenter = float2(_UVTexWidth, _UVTexHeight) * 0.5;
-    float2 diffUV = uvPos - uvCenter;
-    float sqDistanceUV = dot(diffUV, diffUV);
-    
-    // If the square distance exceeds the square of the brush radius, return immediately
-    if (sqDistanceUV > _BrushSize * _BrushSize)
+
+    // Calculate the distance to the center of the brush
+    float2 pixelToCenter = float2(x - _BrushCenterX, y - _BrushCenterY);
+    float distanceToCenter = length(pixelToCenter);
+
+    // Use a smooth circular falloff
+    float brushRadius = _BrushSize * 0.5;
+    if (distanceToCenter > brushRadius)
         return;
-    
 
-    float distanceToUVCenter = sqrt(sqDistanceUV);
-    
-    // Calculate the contribution factor in the UV space
-    float factorUV = 1.0 - (distanceToUVCenter / _BrushSize);
-    
+    // Use a smooth gradient
+    float brushStrength = smoothstep(brushRadius, 0, distanceToCenter);
 
-    // If the contribution is too low, exit to avoid unnecessary calculations
-    if (factorUV <= 0.001)
-        return;
+    float2 uv = _UVTex.Load(int3(x, y, 0)).rg;
+    float2 mainTexCoord = uv * float2(_MainTexWidth, _MainTexHeight);
+    int2 mainTexPos = int2(mainTexCoord);
     
-
-    // Use neighborhood sampling to calculate the weighted average UV coordinate
-    float2 weightedUV = float2(0.0, 0.0);
-    float totalWeight = 0.0;
-    float sigmaSq = 2.0 * _SampleRadius * _SampleRadius;
-    for (int offsetY = -_SampleRadius; offsetY <= _SampleRadius; offsetY++)
-
+    if (mainTexPos.x >= 0 && mainTexPos.x < _MainTexWidth && 
+        mainTexPos.y >= 0 && mainTexPos.y < _MainTexHeight)
     {
-        for (int offsetX = -_SampleRadius; offsetX <= _SampleRadius; offsetX++)
-        {
-            int sampleX = clamp(x + offsetX, 0, _UVTexWidth - 1);
-            int sampleY = clamp(y + offsetY, 0, _UVTexHeight - 1);
-            int2 samplePos = int2(sampleX, sampleY);
-            float2 sampleUV = _UVTex.Load(int3(samplePos, 0)).rg;
-            float sqOffset = (float)(offsetX * offsetX + offsetY * offsetY);
-            float weight = exp(-sqOffset / sigmaSq);
-            weightedUV += sampleUV * weight;
-            totalWeight += weight;
-        }
-    }
-    float2 averagedUV = weightedUV / totalWeight;
-
-    // Convert the averaged UV coordinate to pixel coordinates in the main texture
-    float2 mainTexturePosF = averagedUV * float2(_MainTexWidth, _MainTexHeight);
-    int centerX = (int)floor(mainTexturePosF.x);
-    int centerY = (int)floor(mainTexturePosF.y);
-    int minX = centerX - (int)_PaintRadius;
-    int maxX = centerX + (int)_PaintRadius;
-    int minY = centerY - (int)_PaintRadius;
-    int maxY = centerY + (int)_PaintRadius;
-
-    // Iterate over the local area in the main texture for applying the brush
-    for (int ty = minY; ty <= maxY; ty++)
-    {
-        for (int tx = minX; tx <= maxX; tx++)
-        {
-            // Skip pixels outside the main texture bounds
-            if (tx < 0 || tx >= _MainTexWidth || ty < 0 || ty >= _MainTexHeight)
-                continue;
-                
-            float2 pixelPos = float2(tx, ty);
-            float2 diffMain = pixelPos - mainTexturePosF;
-            float sqDistanceMain = dot(diffMain, diffMain);
-
-            // Fast check if pixel is outside the brush radius (using square comparison)
-            if (sqDistanceMain > _PaintRadius * _PaintRadius)
-                continue;
-            
-
-            // Calculate the actual distance in the main texture
-            float localDistance = sqrt(sqDistanceMain);
-            float factorLocal = 1.0 - (localDistance / _PaintRadius);
-            float brushStrength = factorUV * factorLocal;
-            
-
-            // If the final contribution is too low, skip writing
-            if (brushStrength <= 0.001)
-                continue;
-            
-
-            // Smooth interpolation
-            brushStrength = smoothstep(0.0, 1.0, brushStrength);
-            
-
-            // Get existing color and blend with brush color
-            float4 existingColor = _MainTex[int2(tx, ty)];
-            float4 blendedColor = lerp(existingColor, _BrushColor, brushStrength);
-            _MainTex[int2(tx, ty)] = blendedColor;
-
-        }
+        float4 originalColor = _MainTex[mainTexPos];
+        float4 finalColor = lerp(originalColor, _BrushColor, brushStrength);
+        _MainTex[mainTexPos] = finalColor;
     }
 }
