@@ -6,7 +6,7 @@ RWTexture2D<float4> _MainTex;
 Texture2D<float4> _UVTex;
 Texture2D<float> _DepthTex;
 
-SamplerState samplerLinear
+SamplerState sampler_linear_clamp
 {
     Filter = MIN_MAG_MIP_LINEAR;
     AddressU = Clamp;
@@ -20,8 +20,10 @@ int _MainTexWidth;
 int _MainTexHeight;
 
 // Brush parameters:
-// _BrushSize    : Brush radius in UV texture space (in pixels)
-// _BrushColor   : The color applied by the brush
+Texture2D<float4> _BrushTex;
+int _HasBrushTex;
+int _BrushTexWidth;
+int _BrushTexHeight;
 float _BrushSize;
 float4 _BrushColor;
 int _BrushCenterX;
@@ -50,8 +52,29 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     if (distanceToCenter > brushRadius)
         return;
 
-    // Use a smooth gradient
-    float brushStrength = smoothstep(brushRadius, 0, distanceToCenter);
+    float brushStrength;
+
+    if (_HasBrushTex == 1)
+    {
+        float2 brushUV = float2(
+            (x - (_BrushCenterX - brushRadius)) / _BrushSize,
+            (y - (_BrushCenterY - brushRadius)) / _BrushSize
+        );
+        
+        if (brushUV.x >= 0 && brushUV.x <= 1 && brushUV.y >= 0 && brushUV.y <= 1)
+        {
+            float4 brushSample = _BrushTex.SampleLevel(sampler_linear_clamp, brushUV, 0);
+            brushStrength = brushSample.r * smoothstep(brushRadius, 0, distanceToCenter);
+        }
+        else
+        {
+            brushStrength = 0;
+        }
+    }
+    else
+    {
+        brushStrength = smoothstep(brushRadius, 0, distanceToCenter);
+    }
 
     float2 uv = _UVTex.Load(int3(x, y, 0)).rg;
     float2 mainTexCoord = uv * float2(_MainTexWidth, _MainTexHeight);

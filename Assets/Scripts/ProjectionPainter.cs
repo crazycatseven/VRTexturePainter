@@ -31,9 +31,26 @@ public class ProjectionPainter : MonoBehaviour
 
 
     [Header("Brush Settings")]
+    
+    [Tooltip("The black and white texture of the brush")]
+    [SerializeField] private Texture2D brushTexture;
     public Color brushColor = Color.red;
-
     public int brushSize = 10;
+
+    private Texture2D currentBrushTexture;
+
+    public Texture2D BrushTexture
+    {
+        get => brushTexture;
+        set
+        {
+            if (brushTexture != value)
+            {
+                brushTexture = value;
+                UpdateBrushTextureInComputeShader();
+            }
+        }
+    }
 
     [Header("Visualization Settings")]
     private LineRenderer brushGuideLineRenderer;
@@ -147,6 +164,8 @@ public class ProjectionPainter : MonoBehaviour
                 Debug.LogError("Compute kernel 'CSMain' not found!");
             }
         }
+
+        UpdateBrushTextureInComputeShader();
     }
 
 
@@ -337,6 +356,32 @@ public class ProjectionPainter : MonoBehaviour
         painterComputeShader.Dispatch(kernel, threadGroupsX, threadGroupsY, 1);
     }
 
+    private void UpdateBrushTextureInComputeShader()
+    {
+        if (painterComputeShader != null)
+        {
+            if (brushTexture != null)
+            {
+                painterComputeShader.SetTexture(computeKernel, "_BrushTex", brushTexture);
+                painterComputeShader.SetInt("_HasBrushTex", 1);
+                painterComputeShader.SetInt("_BrushTexWidth", brushTexture.width);
+                painterComputeShader.SetInt("_BrushTexHeight", brushTexture.height);
+            }
+            else
+            {
+                // Create a default texture
+                Texture2D defaultTex = new Texture2D(1, 1);
+                defaultTex.SetPixel(0, 0, Color.white);
+                defaultTex.Apply();
+                
+                painterComputeShader.SetTexture(computeKernel, "_BrushTex", defaultTex);
+                painterComputeShader.SetInt("_HasBrushTex", 0);
+                painterComputeShader.SetInt("_BrushTexWidth", 1);
+                painterComputeShader.SetInt("_BrushTexHeight", 1);
+            }
+            currentBrushTexture = brushTexture;
+        }
+    }
 
     // ================================  VISUALIZATION  ================================
     private void SetupVisualizers()

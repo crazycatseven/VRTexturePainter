@@ -23670,9 +23670,9 @@ MonoBehaviour:
   paintCameraFOV: 30
   uvRenderTextureQuality: 512
   painterComputeShader: {fileID: 7200000, guid: 873627b9154eed741b280d90719b9c1a, type: 3}
+  brushTexture: {fileID: 2800000, guid: 06b789b3cd38dd44fbf07847259c3b48, type: 3}
   brushColor: {r: 1, g: 0, b: 0, a: 1}
-  brushSize: 10
-  paintRadius: 5
+  brushSize: 20
   brushVisualizerMaterial: {fileID: 0}
   guideLineLength: 0.5
   guideLineRotationOffset: {x: 0, y: -12.5, z: 0}
