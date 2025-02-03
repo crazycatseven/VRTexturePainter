@@ -59,9 +59,18 @@ public class ProjectionPainter : MonoBehaviour
     public float guideLineLength = 0.2f;
     [Tooltip("Angle offset for guide line in degrees")]
     public Vector3 guideLineRotationOffset = new Vector3(0, 0, 0);
-
     public Color normalColor = Color.white;
     public Color hoverColor = Color.yellow;
+    private GameObject brushSizeIndicator;
+    private MeshRenderer brushSizeIndicatorRenderer;
+    [SerializeField] private Shader brushSizeIndicatorShader;
+
+    [Range(0.1f, 1.0f)] 
+    public float brushSizeIndicatorThickness = 0.2f;
+    public Color brushSizeIndicatorColor = Color.white;
+
+
+
 
     [Header("Debug Settings")]
     public MeshRenderer debugMeshRenderer;
@@ -408,11 +417,60 @@ public class ProjectionPainter : MonoBehaviour
             alphaKeys = new GradientAlphaKey[] { new GradientAlphaKey(1, 0), new GradientAlphaKey(1, 1) },
             colorKeys = new GradientColorKey[] { new GradientColorKey(normalColor, 0), new GradientColorKey(normalColor, 1) }
         };
+
+        // Setup brush size indicator
+        brushSizeIndicator = new GameObject("Brush Size Indicator");
+        brushSizeIndicator.transform.SetParent(brushTransform);
+
+        var meshFilter = brushSizeIndicator.AddComponent<MeshFilter>();
+        brushSizeIndicatorRenderer = brushSizeIndicator.AddComponent<MeshRenderer>();
+
+        Mesh quadMesh = new Mesh();
+        quadMesh.vertices = new Vector3[] {
+            new Vector3(-0.5f, -0.5f, 0),
+            new Vector3(0.5f, -0.5f, 0),
+            new Vector3(0.5f, 0.5f, 0),
+            new Vector3(-0.5f, 0.5f, 0)
+        };
+        quadMesh.triangles = new int[] { 0, 1, 2, 0, 2, 3 };
+        quadMesh.uv = new Vector2[] {
+            new Vector2(0, 0),
+            new Vector2(1, 0),
+            new Vector2(1, 1),
+            new Vector2(0, 1)
+        };
+
+        meshFilter.mesh = quadMesh;
+
+        if (brushSizeIndicatorShader != null)
+        {
+            Material indicatorMaterial = new Material(brushSizeIndicatorShader);
+            indicatorMaterial.renderQueue = 3000;
+            indicatorMaterial.SetFloat("_Thickness", brushSizeIndicatorThickness);
+            indicatorMaterial.SetColor("_Color", brushSizeIndicatorColor);
+            brushSizeIndicatorRenderer.material = indicatorMaterial;
+            brushSizeIndicatorRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            brushSizeIndicatorRenderer.receiveShadows = false;
+
+
+
+        }
+        else
+        {
+            Debug.LogError("Brush size indicator shader not assigned!");
+        }
+
+
+
+
     }
 
+
+
     private void UpdateVisualizers()
+
     {
-        if (brushTransform == null || brushGuideLineRenderer == null) return;
+        if (brushTransform == null || brushGuideLineRenderer == null || brushSizeIndicator == null) return;
 
         // Calculate rotated direction using offset
         Quaternion offsetRotation = Quaternion.Euler(guideLineRotationOffset);
@@ -437,8 +495,24 @@ public class ProjectionPainter : MonoBehaviour
             // Also update the gradient
             brushGuideLineRenderer.startColor = hoverColor;
             brushGuideLineRenderer.endColor = hoverColor;
+
+
+
+            float distanceToSurface = hit.distance;
+            float fieldOfViewRad = paintCamera.fieldOfView * Mathf.Deg2Rad;
+
+            float frustumHeight = 2.0f * distanceToSurface * Mathf.Tan(fieldOfViewRad * 0.5f);
+            float uvToWorldRatio = frustumHeight / (float)uvRenderTextureQuality;
+            float worldSpaceSize = (brushSize / (float)uvRenderTextureQuality) * frustumHeight;
+
+            brushSizeIndicator.transform.position = hit.point + hit.normal * 0.001f;
+            brushSizeIndicator.transform.rotation = Quaternion.LookRotation(-hit.normal);
+            brushSizeIndicator.transform.localScale = new Vector3(worldSpaceSize, worldSpaceSize, 1);
+
+            brushSizeIndicator.SetActive(true);
         }
         else
+
         {
             brushGuideLineRenderer.SetPosition(0, brushTransform.position);
             brushGuideLineRenderer.SetPosition(1, brushTransform.position + offsetDirection * guideLineLength);
@@ -448,6 +522,8 @@ public class ProjectionPainter : MonoBehaviour
             // Also update the gradient
             brushGuideLineRenderer.startColor = normalColor;
             brushGuideLineRenderer.endColor = normalColor;
+
+            brushSizeIndicator.SetActive(false);
         }
     }
 
@@ -464,6 +540,12 @@ public class ProjectionPainter : MonoBehaviour
 
         if (uvMaterial != null)
             Destroy(uvMaterial);
+
+        if (brushSizeIndicatorRenderer != null && brushSizeIndicatorRenderer.material != null)
+        {
+            Destroy(brushSizeIndicatorRenderer.material);
+        }
     }
+
 
 }
