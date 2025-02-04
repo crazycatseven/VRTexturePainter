@@ -79,6 +79,8 @@ public class ProjectionPainter : MonoBehaviour
     // Material for UV shader
     private Material uvMaterial;
 
+    private bool isDrawing = false;
+
     public enum RenderTextureQuality
     {
         Low = 256,
@@ -214,8 +216,9 @@ public class ProjectionPainter : MonoBehaviour
         if (paintAction != null)
         {
             float triggerValue = paintAction.action.ReadValue<float>();
+            isDrawing = triggerValue > 0;
 
-            if (triggerValue > 0)
+            if (isDrawing)
             {
                 Paint();
             }
@@ -451,18 +454,11 @@ public class ProjectionPainter : MonoBehaviour
             brushSizeIndicatorRenderer.material = indicatorMaterial;
             brushSizeIndicatorRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             brushSizeIndicatorRenderer.receiveShadows = false;
-
-
-
         }
         else
         {
             Debug.LogError("Brush size indicator shader not assigned!");
         }
-
-
-
-
     }
 
 
@@ -485,7 +481,7 @@ public class ProjectionPainter : MonoBehaviour
             guideLineLength,
             1 << targetRenderer.gameObject.layer);
 
-        if (didHit && hit.collider.gameObject == targetRenderer.gameObject)
+        if (didHit && hit.collider.gameObject == targetRenderer.gameObject && !isDrawing)
         {
             brushGuideLineRenderer.SetPosition(0, startPos);
             brushGuideLineRenderer.SetPosition(1, hit.point);
