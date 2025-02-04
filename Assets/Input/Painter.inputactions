@@ -2,6 +2,34 @@
     "name": "Painter",
     "maps": [
         {
+            "name": "Left Controller",
+            "id": "e7417925-17db-4dee-beb8-7141a26928f6",
+            "actions": [
+                {
+                    "name": "Toggle Menu",
+                    "type": "Button",
+                    "id": "c5f6aab6-030e-4497-8718-dd03554b1fc2",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                }
+            ],
+            "bindings": [
+                {
+                    "name": "",
+                    "id": "50bd04bb-c052-43bd-8b85-870e2ace998e",
+                    "path": "<OculusTouchController>{LeftHand}/primaryButton",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Toggle Menu",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                }
+            ]
+        },
+        {
             "name": "Right Controller",
             "id": "5cb3e0c7-7999-4003-895e-978800bd6334",
             "actions": [

@@ -244,6 +244,9 @@ public class ProjectionPainter : MonoBehaviour
         {
             paintAction.action.Enable();
         }
+        MenuEvents.OnBrushSizeChanged += HandleBrushSizeChanged;
+        MenuEvents.OnBrushTextureChanged += HandleBrushTextureChanged;
+        MenuEvents.OnBrushColorChanged += HandleBrushColorChanged;
     }
 
     private void OnDisable()
@@ -252,6 +255,24 @@ public class ProjectionPainter : MonoBehaviour
         {
             paintAction.action.Disable();
         }
+        MenuEvents.OnBrushSizeChanged -= HandleBrushSizeChanged;
+        MenuEvents.OnBrushTextureChanged -= HandleBrushTextureChanged;
+        MenuEvents.OnBrushColorChanged -= HandleBrushColorChanged;
+    }
+
+    private void HandleBrushSizeChanged(float size)
+    {
+        brushSize = Mathf.RoundToInt(size);
+    }
+
+    private void HandleBrushTextureChanged(Texture2D texture)
+    {
+        BrushTexture = texture;
+    }
+
+    private void HandleBrushColorChanged(Color color)
+    {
+        brushColor = color;
     }
 
 
