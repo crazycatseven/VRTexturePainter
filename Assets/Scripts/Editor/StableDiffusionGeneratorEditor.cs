@@ -87,7 +87,6 @@ public class StableDiffusionImageGeneratorEditor : Editor
     private void OnRefreshComplete()
     {
         isRefreshing = false;
-        Debug.Log("模型列表刷新完成");
         Repaint();
         
         // Unsubscribe from event to prevent multiple subscriptions
@@ -99,7 +98,6 @@ public class StableDiffusionImageGeneratorEditor : Editor
     private void OnGenerateComplete(Sprite sprite)
     {
         isGenerating = false;
-        Debug.Log("图像生成完成");
         Repaint();
 
         // Unsubscribe from event to prevent multiple subscriptions
